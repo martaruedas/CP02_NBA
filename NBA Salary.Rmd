@@ -1,0 +1,301 @@
+---
+title: "Salario NBA (CV y Regulación)"
+author: "Marta Ruedas Burgos"
+date: "7/11/2020"
+output: 
+   prettydoc::html_pretty:
+    theme: lume
+    highlight: github
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# OBJETIVO
+
+El objetivo de este caso práctico ha sido determinar el modelo más deseable para predecir el salario de los jugadores de la NBA. Los datos a analizar han sido localizados en el fichero nominado nba.csv, el cual nos ha facilitado para la resolución del caso. El salario de los jugadores de la NBA es un conjunto de datos estadísticos desarrollados para el futuro, de manera que podamos medir el valor de cada jugador de un método más sencillo y rápido en un cierto plazo de tiempo. 
+
+# LIBRERÍAS
+
+Importación de librerÍas necesarias para el caso práctico.
+
+```{r cars}
+
+library(readr)
+library(car) # Normalidad nba
+library(tidyr) # Modelo lineal
+library(tidyverse) # Modelo lineal
+library(here) # Comentar
+library(janitor) # Nombres limpios
+library(skimr) # Vistosos Summarizes
+library(magrittr) # Pipe operaciones
+library(corrplot) # Correlaciones
+library(ggcorrplot)  # Correlaciones
+library(PerformanceAnalytics) # Correlaciones
+library(leaps) # Modelo de seleccion
+library(rsample)  # data splitting 
+library(glmnet)   # implementing regularized regression approaches
+library(dplyr)    # basic data manipulation procedures
+library(ggplot2)  # plotting
+```
+
+
+En primer lugar he creado un R Script donde he ido resolviendo paso por paso el modelo mencionado anteriormente, con la finalidad de predecir el salario de los jugadores de la NBA. Presentamos un análisis descriptivo donde las variables que muestra son categóricas y cuantitativaS, y donde los modelos de regresión tienen un objetivo único, predecir la variable dependiente.
+
+
+# READ DATA
+```{r pressure, echo=TRUE}
+nba <- read_csv("nba.csv") 
+View(nba)
+```
+
+# NOMBRE DE LAS VARIABLES
+
+```{r}
+nba %<>% clean_names()
+colnames(nba)
+```
+
+
+# SUMMARIZE DATA
+```{r}
+skim(nba)
+```
+
+Nombre nba, columnas 28, filas 485.
+Tipos de columnas numeric (25) - character (3) PLAYER, NBA_COUNTRY AND TM.
+
+Al haber datos repetidos y varios NA usamos el distinct y el drop a continuación.
+
+# DATA WRANGLING DATA
+
+```{r}
+# Eliminar todas las filas que estén duplicadas
+nba %<>% distinct(player,.keep_all= TRUE)
+
+# Eliminar NAs
+nba %<>% drop_na()
+
+# Summarise/Resumen
+skim(nba)
+```
+
+# EDA
+
+# LOG SALARY
+
+El salario pasa a ser un logaritmo.
+```{r}
+log_nba <- nba %>% mutate(salary=log(salary))
+
+skim(log_nba)
+
+```
+
+Ahora, la tabla la he llamado log_nba.
+
+Creación de Tabla de 3 variables: 
+
+```{r}
+vars <- c("player","nba_country","tm")
+
+```
+# CORRELACIONES
+
+```{r fig.height=10, fig.width=10}
+ggcorrplot(cor(log_nba %>% 
+                 select_at(vars(-vars)), 
+               use = "complete.obs"),
+           hc.order = TRUE,
+           type = "lower",  lab = TRUE)
+```
+
+Cuanto mayor sea el número de la correlación, es decir, más cercano al 1 habrá mayor correlación entre las dos variables. 
+
+# VIF
+
+Mide cuanto aumenta la varianza de un coeficiente de regresión estimado. Si sus predictores estan correlacionados. 
+Además, detecta problemas de multicolinealidad, que hace que nuestros modelos sean menos precisos.
+
+```{r}
+nba_vif <- lm(salary~.-player-nba_country-tm, data=log_nba)
+
+vif_values_nba <- car::vif(nba_vif)
+
+```
+
+
+```{r}
+barplot(vif_values_nba, main = "VIF Values NBA", horiz = TRUE, col = "darkorange")
+abline(v = 9, lwd = 6, lty = 4)
+```
+
+
+# TABLA DE LOS VALORES
+
+```{r}
+knitr::kable(vif_values_nba)
+```
+
+Si el VIF es mayor que 6 no sería un resultado bueno. 
+
+# MODELO SELECCIONADO
+
+Cogemos todas las columnas menos las tres categóricas.
+```{r}
+nba <- log_nba %>% select_at(vars(-vars))
+```
+
+Si ejecutamos set.seed(1234) nunca varian, siempre nos daría el mismo resultado aleatorio.
+```{r}
+set.seed(1234)
+num_data <- nrow(nba) # coge el número de filas
+num_data_test <- 10 # el número de la muestra, tamaño
+train = sample(num_data ,num_data-num_data_test) # donde probamos los modelos
+```
+
+ 
+# COMPROBACIÓN
+```{r}
+data_train <- nba[train,]
+data_test  <-  nba[-train,]
+```
+# MODELO SELECCIONADO
+```{r}
+modelo_seleccionado <- regsubsets(salary~. , data =data_train, method = "seqrep",nvmax=24) 
+```
+
+```{r}
+modelo_seleccionado_summary <- summary(modelo_seleccionado)
+```
+
+
+24 modelos va probando. Y Si tiene * es que ha metido esa variable dentro del modelo.
+
+Conclusión, tres criterios distintos para elegir un modelo. 
+
+# PLOT 
+```{r}
+plot(modelo_seleccionado, scale = "bic", main = "BIC NBA")
+```
+
+# DATAFRAME 
+
+Cogemos el modelo con el maximo del R2 ajustado, el valor minimo del CP y el valor minimo del BIC.
+```{r}
+data.frame(
+  Adj.R2 = which.max(modelo_seleccionado_summary$adjr2),
+  CP = which.min(modelo_seleccionado_summary$cp),
+  BIC = which.min(modelo_seleccionado_summary$bic)
+)
+```
+De los 24 modelos que nos salian anteriormente, por ejemplo el Adj.R2 el 14 es el modelo que tiene el maximo.
+
+# MODELO PARA EL R2 AJUSTADO 
+```{r}
+plot(modelo_seleccionado, scale = "bic", main = "BIC")
+```
+
+De todas las variables el mp los minutos por partidos es la variable mas importante para determinar el salario
+
+# MODELO PARA EL CP
+```{r}
+coef(modelo_seleccionado,which.min(modelo_seleccionado_summary$cp))
+```
+Variables necesarias para explicar el modelo segun el criterio del CP.
+
+# MODELO PARA EL BIC 
+```{r}
+coef(modelo_seleccionado,which.min(modelo_seleccionado_summary$bic))
+```
+Variables necesarias para explicar el modelo segun el criterio del BIC.
+
+
+# Anotación
+Anotacion: todos los modelos son erróneos, algunos modelos podrían servir.
+
+# SET SEED
+
+```{r}
+set.seed(1234)
+data_train <- nba[train,]
+data_test  <-  nba[-train,]
+
+nba_train_x <- model.matrix(salary ~ ., data_train)[, -1]
+nba_train_y <- log(data_train$salary)
+
+nba_test_x <- model.matrix(salary ~ ., data_test)[, -1]
+nba_test_y <- log(data_test$salary)
+
+# What is the dimension of of your feature matrix?
+dim(nba_train_x)
+
+# 471 filas y 24 columnas
+```
+
+
+# ELASTIC NET
+```{r}
+lasso    <- glmnet(nba_train_x, nba_train_y, alpha = 1.0) 
+elastic1 <- glmnet(nba_train_x, nba_train_y, alpha = 0.25) 
+elastic2 <- glmnet(nba_train_x, nba_train_y, alpha = 0.75) 
+ridge    <- glmnet(nba_train_x, nba_train_y, alpha = 0.0)
+```
+
+```{r}
+par(mfrow = c(2, 2), mar = c(6, 4, 6, 2) + 0.1)
+plot(lasso, xvar = "lambda", main = "Lasso (Alpha = 1)\n\n\n")
+plot(elastic1, xvar = "lambda", main = "Elastic Net (Alpha = .25)\n\n\n")
+plot(elastic2, xvar = "lambda", main = "Elastic Net (Alpha = .75)\n\n\n")
+plot(ridge, xvar = "lambda", main = "Ridge (Alpha = 0)\n\n\n")
+```
+
+
+# TUNING 
+Selecciono muchos alphas de 0 a 1 para los distintos modelos.  
+
+```{r}
+fold_id <- sample(1:10, size = length(nba_train_y), replace=TRUE)
+```
+
+```{r}
+tuning_grid <- tibble::tibble(
+  alpha      = seq(0, 1, by = .1),
+  mse_min    = NA,
+  mse_1se    = NA,
+  lambda_min = NA,
+  lambda_1se = NA
+)
+tuning_grid
+```
+```{r}
+for(i in seq_along(tuning_grid$alpha)) {
+  
+  # fit CV model for each alpha value
+  fit <- cv.glmnet(nba_train_x, nba_train_y, alpha = tuning_grid$alpha[i], foldid = fold_id)
+  
+  # extract MSE and lambda values
+  tuning_grid$mse_min[i]    <- fit$cvm[fit$lambda == fit$lambda.min]
+  tuning_grid$mse_1se[i]    <- fit$cvm[fit$lambda == fit$lambda.1se]
+  tuning_grid$lambda_min[i] <- fit$lambda.min
+  tuning_grid$lambda_1se[i] <- fit$lambda.1se
+}
+
+tuning_grid
+```
+mse_1se busca el que menor valor tenga, será el mejor modelo al tener mayor precisión. Con el mejor alpha asociado a ese modelo.
+
+Ir cambiando variables de nuestro modelo y comprobar cual de ellos es el que menos errores tiene. 
+
+# CONCLUSIÓN
+
+La conclusión después del análisis práctico ha sido que todos los jugadores de la NBA exportados del fichero principal nba.csv nos predice un salario predeterminado para cada jugador de la NBA, de esta forma podemos determinar el valor de cada uno de ellos con un procedimiento directo.   
+
+# Enlace GitHub
+Enlace de acceso al repository GitHub con el código: https://github.com/martaruedas/CP02_NBA.git
+
+---
+email: marta.ruedas@cunef.edu
+---
